@@ -42,9 +42,14 @@ from . import version
 
 __version__ = version.__version__
 
+# Graph API
 FACEBOOK_GRAPH_URL = "https://graph.facebook.com/"
 FACEBOOK_OAUTH_DIALOG_URL = "https://www.facebook.com/dialog/oauth?"
 VALID_API_VERSIONS = ["2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7"]
+
+# AccountKit
+ACCOUNTKIT_GRAPH_URL = "https://graph.accountkit.com"
+VALID_ACCOUNTKIT_API_VERSIONS = ["1.0"]
 
 
 class GraphAPI(object):
@@ -367,6 +372,77 @@ class GraphAPIError(Exception):
                     self.message = result
 
         Exception.__init__(self, self.message)
+
+
+class AccountKit(object):
+    """A client for Facebook's AccountKit"""
+
+    def __init__(self, app_id, app_secret=None, timeout=None, version=None, proxies=None, verify=False):
+        """Instantiates an AccountKit object
+
+        app_secret  optional    Required if you have the "Require App Secret" setting activated
+                                in your app dashboard.
+        verify      optional    True if we should attempt to include appsecret_proof with each
+                                request, False otherwise
+
+        """
+
+        # Default to 1.0. It's the only version that exists for now
+        self.version = "v%s" % VALID_ACCOUNTKIT_API_VERSIONS[0]
+
+        self.verify = verify
+        self.timeout = timeout
+        self.proxies = proxies
+
+        self.app_id = app_id
+        self.app_secret = app_secret
+        if app_secret:
+            self.app_token = "AA|%s|%s" % (self.app_id, self.app_secret)
+
+    def calculate_proof(self, token):
+        assert self.app_secret
+        return hmac.new(
+                self.app_secret,
+                msg=token,
+                digestmod=hashlib.sha256).hexdigest()
+
+    def request(self, path, args=None, post_args=None, method=None):
+        """Makes the request to AccountKit"""
+
+        args = args or {}
+        if self.verify and args.get('access_token'):
+            args['appsecret_proof'] = self.calculate_proof(args.get('access_token', ''))
+
+        if post_args is not None:
+            method = "POST"
+
+        try:
+            response = requests.request(method or "GET",
+                                        "%s/%s/%s" % (ACCOUNTKIT_GRAPH_URL, self.version, path),
+                                        timeout=self.timeout,
+                                        params=args,
+                                        data=post_args,
+                                        proxies=self.proxies)
+
+            result = response.json()
+
+            if result.get("error"):
+                raise AccountKitAPIError(result)
+            return result
+
+        except requests.HTTPError as e:
+            response = json.loads(e.read())
+            raise AccountKitAPIError(response)
+
+    def validate_access_token(self, access_token):
+        return self.request('me', args={"access_token": access_token})
+
+    def delete_account(self, account_id):
+        return self.request(account_id)
+
+
+class AccountKitAPIError(GraphAPIError):
+    pass
 
 
 def get_user_from_cookie(cookies, app_id, app_secret):
